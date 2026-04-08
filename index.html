@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <title>BallBot</title>
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; font-family:monospace; }
+    body { background:#111; color:#eee; display:flex; flex-direction:column; height:100vh; overflow:hidden; }
+
+    /* ---- CONFIG BAR ---- */
+    .cfg {
+      display:flex; gap:8px; align-items:center;
+      padding:8px 12px; background:#1a1a1a;
+      border-bottom:1px solid #333; flex-wrap:wrap;
+      flex-shrink:0;
+    }
+    .cfg label { font-size:11px; color:#888; white-space:nowrap; }
+    .cfg input {
+      flex:1; min-width:110px; font-size:12px;
+      padding:5px 8px; border:1px solid #444;
+      border-radius:6px; background:#222; color:#eee; outline:none;
+    }
+    .cfg button {
+      font-size:12px; padding:5px 12px;
+      border:1px solid #555; border-radius:6px;
+      background:#222; color:#eee; cursor:pointer; white-space:nowrap;
+    }
+    .cfg button:active { opacity:0.6; }
+    .status { display:flex; align-items:center; gap:5px; font-size:11px; color:#888; margin-left:auto; }
+    .dot { width:7px; height:7px; border-radius:50%; background:#c0392b; flex-shrink:0; }
+    .dot.on { background:#27ae60; }
+
+    /* ---- CAMERA ---- */
+    .cam-wrap {
+      position:relative; width:100%; flex:1;
+      background:#000; overflow:hidden;
+    }
+    #feed { width:100%; height:100%; object-fit:cover; display:none; }
+    .no-feed {
+      position:absolute; inset:0;
+      display:flex; flex-direction:column;
+      align-items:center; justify-content:center;
+      gap:8px; color:#444; font-size:12px;
+    }
+
+    /* ---- D-PAD bottom right ---- */
+    .dpad {
+      position:absolute;
+      bottom:16px; right:16px;
+      display:grid;
+      grid-template-columns: repeat(3, 52px);
+      grid-template-rows: repeat(3, 52px);
+      gap:5px;
+    }
+
+    .btn {
+      width:52px; height:52px;
+      display:flex; align-items:center; justify-content:center;
+      cursor:pointer; user-select:none;
+      background:rgba(10,10,10,0.6);
+      border:1px solid rgba(255,255,255,0.2);
+      border-radius:10px;
+      transition:background 0.08s, transform 0.08s;
+      backdrop-filter:blur(6px);
+      -webkit-backdrop-filter:blur(6px);
+    }
+    .btn svg { pointer-events:none; }
+    .btn.active {
+      background:rgba(255,255,255,0.15);
+      transform:scale(0.9);
+      border-color:rgba(255,255,255,0.5);
+    }
+    .btn-stop {
+      background:rgba(160,0,0,0.55);
+      border-color:rgba(255,80,80,0.3);
+    }
+    .btn-stop.active { background:rgba(200,0,0,0.7); }
+
+    /* ---- STATS ---- */
+    .stats {
+      display:flex; border-top:1px solid #2a2a2a;
+      flex-shrink:0; background:#161616;
+    }
+    .stat { flex:1; padding:7px 10px; border-right:1px solid #2a2a2a; }
+    .stat:last-child { border-right:none; }
+    .stat-label { font-size:9px; color:#555; text-transform:uppercase; letter-spacing:1px; margin-bottom:2px; }
+    .stat-val { font-size:13px; font-weight:bold; color:#ccc; }
+    .stat-val.moving  { color:#2ecc71; }
+    .stat-val.stopped { color:#e74c3c; }
+
+    .hint { font-size:9px; color:#444; text-align:center; padding:5px; flex-shrink:0; background:#111; }
+  </style>
+</head>
+<body>
+
+<!-- CONFIG -->
+<div class="cfg">
+  <label>CAM</label>
+  <input id="camIp" type="text" placeholder="Camera ESP32 IP" value="192.168.1.100"/>
+  <label>MOTOR</label>
+  <input id="motorIp" type="text" placeholder="Motor ESP32 IP" value="192.168.1.101"/>
+  <button onclick="connect()">Connect</button>
+  <div class="status">
+    <div class="dot" id="dot"></div>
+    <span id="stxt">Offline</span>
+  </div>
+</div>
+
+<!-- CAMERA FEED -->
+<div class="cam-wrap">
+  <img id="feed" alt="stream"/>
+  <div class="no-feed" id="noFeed">
+    <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="1">
+      <rect x="2" y="7" width="15" height="10" rx="2"/>
+      <path d="M17 9l5-2v10l-5-2"/>
+    </svg>
+    <span>Enter IPs above and tap Connect</span>
+  </div>
+
+  <!-- D-PAD -->
+  <div class="dpad">
+
+    <!-- Row 1 -->
+    <div></div>
+    <div class="btn" id="bUp"
+      onpointerdown="press('forward',this)" onpointerup="release('forward',this)" onpointerleave="release('forward',this)"
+      ontouchstart="press('forward',this);event.preventDefault()" ontouchend="release('forward',this)">
+      <svg width="20" height="20" viewBox="0 0 20 20">
+        <polygon points="10,3 18,16 2,16" fill="white" opacity="0.9"/>
+      </svg>
+    </div>
+    <div></div>
+
+    <!-- Row 2 -->
+    <div class="btn" id="bLeft"
+      onpointerdown="press('left',this)" onpointerup="release('left',this)" onpointerleave="release('left',this)"
+      ontouchstart="press('left',this);event.preventDefault()" ontouchend="release('left',this)">
+      <svg width="20" height="20" viewBox="0 0 20 20">
+        <polygon points="3,10 16,2 16,18" fill="white" opacity="0.9"/>
+      </svg>
+    </div>
+    <div class="btn btn-stop" id="bStop"
+      onpointerdown="releaseAll()" ontouchstart="releaseAll();event.preventDefault()">
+      <svg width="14" height="14" viewBox="0 0 14 14">
+        <rect x="1" y="1" width="12" height="12" rx="2" fill="white" opacity="0.85"/>
+      </svg>
+    </div>
+    <div class="btn" id="bRight"
+      onpointerdown="press('right',this)" onpointerup="release('right',this)" onpointerleave="release('right',this)"
+      ontouchstart="press('right',this);event.preventDefault()" ontouchend="release('right',this)">
+      <svg width="20" height="20" viewBox="0 0 20 20">
+        <polygon points="17,10 4,2 4,18" fill="white" opacity="0.9"/>
+      </svg>
+    </div>
+
+    <!-- Row 3 -->
+    <div></div>
+    <div class="btn" id="bDown"
+      onpointerdown="press('backward',this)" onpointerup="release('backward',this)" onpointerleave="release('backward',this)"
+      ontouchstart="press('backward',this);event.preventDefault()" ontouchend="release('backward',this)">
+      <svg width="20" height="20" viewBox="0 0 20 20">
+        <polygon points="10,17 2,4 18,4" fill="white" opacity="0.9"/>
+      </svg>
+    </div>
+    <div></div>
+
+  </div>
+</div>
+
+<!-- STATS -->
+<div class="stats">
+  <div class="stat">
+    <div class="stat-label">Status</div>
+    <div class="stat-val stopped" id="tStatus">Stopped</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Direction</div>
+    <div class="stat-val" id="tDir">—</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">Commands</div>
+    <div class="stat-val" id="tCmds">0</div>
+  </div>
+</div>
+<div class="hint">Hold buttons to move · Hold 2 at once for diagonal · Space to stop</div>
+
+<script>
+  let camIp   = '192.168.1.100';
+  let motorIp = '192.168.1.101';
+  let timer   = null;
+  let cmds    = 0;
+
+  // tracks which directions are currently held
+  let held = { forward:false, backward:false, left:false, right:false };
+
+  // ---- CONNECT ----
+  function connect() {
+    camIp   = document.getElementById('camIp').value.trim();
+    motorIp = document.getElementById('motorIp').value.trim();
+
+    const feed   = document.getElementById('feed');
+    const noFeed = document.getElementById('noFeed');
+    feed.src = '';
+    feed.onload  = () => { feed.style.display = 'block'; noFeed.style.display = 'none'; setConn(true); };
+    feed.onerror = () => { feed.style.display = 'none';  noFeed.style.display = 'flex'; setConn(false); };
+    feed.src = 'http://' + camIp + ':81/stream';
+    fetch('http://' + motorIp + '/stop', { mode:'no-cors' }).then(() => setConn(true)).catch(() => {});
+  }
+
+  function setConn(v) {
+    document.getElementById('dot').className    = 'dot' + (v ? ' on' : '');
+    document.getElementById('stxt').textContent = v ? 'Connected' : 'Offline';
+  }
+
+  // ---- WORK OUT WHICH COMMAND TO SEND BASED ON HELD BUTTONS ----
+  function resolveCmd() {
+    const f = held.forward, b = held.backward, l = held.left, r = held.right;
+    if (f && l)  return 'frontleft';
+    if (f && r)  return 'frontright';
+    if (b && l)  return 'backleft';
+    if (b && r)  return 'backright';
+    if (f)       return 'forward';
+    if (b)       return 'backward';
+    if (l)       return 'left';
+    if (r)       return 'right';
+    return 'stop';
+  }
+
+  // ---- SEND COMMAND TO MOTOR ESP32 ----
+  function send(cmd) {
+    fetch('http://' + motorIp + '/' + cmd, { mode:'no-cors' }).catch(() => {});
+    cmds++;
+    document.getElementById('tCmds').textContent = cmds;
+    const dirs = {
+      forward:'▲ Forward',       backward:'▼ Backward',
+      left:'◀ Left',             right:'▶ Right',
+      frontleft:'↖ Front-Left',  frontright:'↗ Front-Right',
+      backleft:'↙ Back-Left',    backright:'↘ Back-Right',
+      stop:'— Stop'
+    };
+    document.getElementById('tDir').textContent = dirs[cmd] || '—';
+    const s = document.getElementById('tStatus');
+    s.textContent = cmd === 'stop' ? 'Stopped' : 'Moving';
+    s.className   = 'stat-val ' + (cmd === 'stop' ? 'stopped' : 'moving');
+  }
+
+  // ---- UPDATE — recalculates and sends current command ----
+  function update() {
+    clearInterval(timer);
+    const cmd = resolveCmd();
+    send(cmd);
+    if (cmd !== 'stop') {
+      timer = setInterval(() => send(cmd), 100);
+    }
+  }
+
+  // ---- BUTTON PRESS ----
+  function press(dir, el) {
+    held[dir] = true;
+    if (el) el.classList.add('active');
+    update();
+  }
+
+  // ---- BUTTON RELEASE ----
+  function release(dir, el) {
+    held[dir] = false;
+    if (el) el.classList.remove('active');
+    update();
+  }
+
+  // ---- STOP ALL ----
+  function releaseAll() {
+    held = { forward:false, backward:false, left:false, right:false };
+    document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+    update();
+  }
+
+  // ---- KEYBOARD ----
+  const km = {
+    ArrowUp:'forward', ArrowDown:'backward',
+    ArrowLeft:'left',  ArrowRight:'right',
+    w:'forward', s:'backward', a:'left', d:'right'
+  };
+  const btnMap = {
+    forward:'bUp', backward:'bDown', left:'bLeft', right:'bRight'
+  };
+
+  document.addEventListener('keydown', e => {
+    const dir = km[e.key];
+    if (dir) {
+      e.preventDefault();
+      if (!held[dir]) press(dir, document.getElementById(btnMap[dir]));
+    }
+    if (e.key === ' ') { e.preventDefault(); releaseAll(); }
+  });
+
+  document.addEventListener('keyup', e => {
+    const dir = km[e.key];
+    if (dir) release(dir, document.getElementById(btnMap[dir]));
+  });
+</script>
+</body>
+</html>
